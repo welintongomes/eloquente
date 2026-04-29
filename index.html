@@ -952,9 +952,7 @@ function buildTypeMode(card) {
   const sess = studySession;
   const answered = sess.typeAnswered;
   const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
-  
   const promptTxt = isRel ? `Digite UM ${hl(card.cardType)} para:` : 'Escreva a palavra para esta definição:';
-  // ✨ LIMPANDO O TEXTO EXIBIDO:
   const displayTxt = isRel ? card.word : clean(card.definition);
 
   return `
@@ -967,8 +965,12 @@ function buildTypeMode(card) {
     </div>
     ${!answered ? `
     <div style="display:flex;gap:8px;margin-bottom:10px">
+      <button class="btn ghost sm" id="hintBtn" onclick="useHint()" title="Usar Dica" style="padding:0 12px; font-size:18px; border-color:var(--border2)">💡</button>
       <input class="inp" id="typeInput" placeholder="Digite aqui..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" onkeydown="if(event.key==='Enter')checkType()">
       <button class="btn gold" style="width:auto;padding:10px 16px" onclick="checkType()">→</button>
+    </div>
+    <div id="hint-display" style="display:${sess.hintUsed ? 'block' : 'none'}; font-size:14px; color:var(--gold2); margin-bottom:12px; font-weight:600; text-align:center">
+       ${sess.hintUsed ? `💡 <b>Dica:</b> ${sess.hintText}` : ''}
     </div>` : `
     <div class="type-result ${sess.typeCorrect ? 'ok' : 'fail'}" style="margin-bottom:10px">
       ${sess.typeCorrect ? '✓ Excelente!' : '✗ Incorreto.'} 
@@ -976,21 +978,15 @@ function buildTypeMode(card) {
         ${isRel ? `Opções válidas: <b>${esc(clean(card.definition))}</b>` : `A resposta é: <b>${esc(card.word)}</b>`}
       </div>
     </div>
-    <div class="rating-row">
-      <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
-      <button class="rating-btn r${sess.typeCorrect ? '4' : '2'}" onclick="rateCard(${sess.typeCorrect ? 3 : 1})"><span class="rating-lbl">${sess.typeCorrect ? 'Correto ✓' : 'Difícil'}</span></button>
-    </div>`}`;
+    ${getRatingRowHtml(sess.typeCorrect, 'Correto ✓')}`}`;
 }
 
 function buildContextMode(card) {
   const sess = studySession;
   const answered = sess.contextAnswered;
   const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
+  let blanked = '', revealed = '';
   
-  let blanked = '';
-  let revealed = '';
-  
-  // ✨ LIMPANDO O EXEMPLO PARA ESCONDER:
   if (card.example) {
     blanked = esc(clean(card.example)).replace(new RegExp('('+escReg(card.word)+')', 'gi'), '______');
     revealed = esc(clean(card.example)).replace(new RegExp('('+escReg(card.word)+')', 'gi'), '<mark>$1</mark>');
@@ -1005,7 +1001,6 @@ function buildContextMode(card) {
   }
   
   const promptTxt = isRel ? `Complete com UM ${hl(card.cardType)}:` : 'Complete a lacuna:';
-
   let html = `
     <div class="context-card">
       <div class="context-q">${promptTxt}</div>
@@ -1023,8 +1018,12 @@ function buildContextMode(card) {
   if (!answered) {
     html += `
     <div style="display:flex;gap:8px">
+      <button class="btn ghost sm" id="hintBtn" onclick="useHint()" title="Usar Dica" style="padding:0 12px; font-size:18px; border-color:var(--border2)">💡</button>
       <input class="inp" id="ctxInput" placeholder="Escreva a palavra..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" onkeydown="if(event.key==='Enter')checkContext()">
       <button class="btn gold" style="width:auto;padding:10px 16px" onclick="checkContext()">→</button>
+    </div>
+    <div id="hint-display" style="display:${sess.hintUsed ? 'block' : 'none'}; font-size:14px; color:var(--gold2); margin-top:10px; font-weight:600; text-align:center">
+       ${sess.hintUsed ? `💡 <b>Dica:</b> ${sess.hintText}` : ''}
     </div>
     <button class="btn ghost" style="margin-top:8px" onclick="skipContext()">Ver resposta →</button>`;
   } else {
@@ -1032,24 +1031,12 @@ function buildContextMode(card) {
     <div class="type-result ${sess.contextCorrect ? 'ok' : 'fail'}" style="margin-bottom:10px">
       ${sess.contextCorrect ? `✓ Excelente!` : `✗ Incorreto.`}
     </div>`;
-
     if (isRel) {
-       html += `
-       <div class="quote" style="margin-bottom:10px; border-color: ${sess.contextCorrect ? 'var(--green)' : 'var(--red)'}">
-         <b>Opções válidas:</b><br> 
-         <span style="color:var(--ink)">${esc(clean(card.definition))}</span>
-       </div>`;
+       html += `<div class="quote" style="margin-bottom:10px; border-color: ${sess.contextCorrect ? 'var(--green)' : 'var(--red)'}"><b>Opções válidas:</b><br><span style="color:var(--ink)">${esc(clean(card.definition))}</span></div>`;
     } else if (!sess.contextCorrect) {
        html += `<div class="quote" style="margin-bottom:10px; border-color: var(--red)">A palavra correta era: "${esc(card.word)}"</div>`;
     }
-
-    html += `
-    <div class="rating-row">
-      <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
-      <button class="rating-btn r${sess.contextCorrect ? '4' : '2'}" onclick="rateCard(${sess.contextCorrect ? 3 : 1})">
-        <span class="rating-lbl">${sess.contextCorrect ? 'Perfeito ✓' : 'Difícil'}</span>
-      </button>
-    </div>`;
+    html += getRatingRowHtml(sess.contextCorrect, 'Perfeito ✓');
   }
   return html;
 }
@@ -1062,7 +1049,6 @@ function buildScrambleMode(card) {
       const valids = getValidAnswers(card);
       target = valids[Math.floor(Math.random() * valids.length)];
     }
-    
     sess.scrambleTarget = target.normalize('NFC'); 
     const letters = sess.scrambleTarget.replace(/[\s\u200B-\u200D\uFEFF]/g, '').split('');
     sess.scrambledWord = letters.sort(() => Math.random() - 0.5).join('  ').toUpperCase();
@@ -1072,7 +1058,6 @@ function buildScrambleMode(card) {
   const answered = sess.scrambleAnswered;
   const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
   const promptTxt = isRel ? `Desembaralhe UM ${hl(card.cardType)} de:` : `Desembaralhe as letras:`;
-  // ✨ LIMPANDO O TEXTO:
   const displayTxt = isRel ? card.word : clean(card.definition);
 
   return `
@@ -1086,18 +1071,17 @@ function buildScrambleMode(card) {
     </div>
     ${!answered ? `
     <div style="display:flex;gap:8px;margin-bottom:10px">
+      <button class="btn ghost sm" id="hintBtn" onclick="useHint()" title="Usar Dica" style="padding:0 12px; font-size:18px; border-color:var(--border2)">💡</button>
       <input class="inp" id="scrambleInput" placeholder="Digite a palavra..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" onkeydown="if(event.key==='Enter')checkScramble()">
       <button class="btn gold" style="width:auto;padding:10px 16px" onclick="checkScramble()">→</button>
+    </div>
+    <div id="hint-display" style="display:${sess.hintUsed ? 'block' : 'none'}; font-size:14px; color:var(--gold2); margin-bottom:12px; font-weight:600; text-align:center">
+       ${sess.hintUsed ? `💡 <b>Dica:</b> ${sess.hintText}` : ''}
     </div>` : `
     <div class="type-result ${sess.scrambleCorrect ? 'ok' : 'fail'}" style="margin-bottom:10px">
       ${sess.scrambleCorrect ? `✓ Perfeito! "${esc(sess.scrambleTarget)}"` : `✗ A palavra correta é: "${esc(sess.scrambleTarget)}"`}
     </div>
-    <div class="rating-row">
-      <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
-      <button class="rating-btn r${sess.scrambleCorrect ? '4' : '2'}" onclick="rateCard(${sess.scrambleCorrect ? 3 : 1})">
-        <span class="rating-lbl">${sess.scrambleCorrect ? 'Correto ✓' : 'Difícil'}</span>
-      </button>
-    </div>`}`;
+    ${getRatingRowHtml(sess.scrambleCorrect, 'Correto ✓')}`}`;
 }
 
 function buildSpellMode(card) {
@@ -1108,7 +1092,6 @@ function buildSpellMode(card) {
       const valids = getValidAnswers(card);
       target = valids[Math.floor(Math.random() * valids.length)];
     }
-    
     sess.spellTarget = target.normalize('NFC'); 
     const chars = sess.spellTarget.replace(/[\s\u200B-\u200D\uFEFF]/g, '').toUpperCase().split('');
     sess.spellPool = chars.map((char, i) => ({ id: i, char })).sort(() => Math.random() - 0.5);
@@ -1128,7 +1111,6 @@ function buildSpellMode(card) {
 
   const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
   const promptTxt = isRel ? `Forme UM ${hl(card.cardType)} para:` : `Toque para formar a palavra:`;
-  // ✨ LIMPANDO O TEXTO:
   const displayTxt = isRel ? card.word : clean(card.definition);
 
   return `
@@ -1137,32 +1119,25 @@ function buildSpellMode(card) {
         <div class="fc-type" style="margin-bottom:8px">${promptTxt}</div>
         ${renderVisual(card)}
         <div class="fc-definition" style="font-size:16px;margin-bottom:16px">${esc(displayTxt)}</div>
-
         <div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;align-items:center;min-height:54px;padding:8px;background:rgba(0,0,0,0.3);border-radius:var(--r);border:1px dashed var(--border3);margin-bottom:16px">
           ${ansHtml}
         </div>
-
-        ${!answered ? `
-        <div style="display:flex;flex-wrap:wrap;gap:20px;justify-content:center">
-          ${availHtml}
-        </div>` : ''}
+        ${!answered ? `<div style="display:flex;flex-wrap:wrap;gap:20px;justify-content:center">${availHtml}</div>` : ''}
       </div>
     </div>
-
     ${!answered ? `
     <div style="display:flex;gap:8px">
+      <button class="btn ghost" style="flex:1; border-color:var(--gold2); color:var(--gold2)" id="hintBtn" onclick="useHint()">💡 Dica</button>
       <button class="btn ghost" style="flex:1" onclick="spellClear()">⟲ Limpar</button>
       <button class="btn gold" style="flex:2" onclick="checkSpell()">Verificar →</button>
+    </div>
+    <div id="hint-display" style="display:${sess.hintUsed ? 'block' : 'none'}; font-size:14px; color:var(--gold2); margin-top:12px; font-weight:600; text-align:center">
+       ${sess.hintUsed ? `💡 <b>Dica:</b> ${sess.hintText}` : ''}
     </div>` : `
     <div class="type-result ${sess.spellCorrect ? 'ok' : 'fail'}" style="margin-bottom:10px">
       ${sess.spellCorrect ? `✓ Excelente! "${esc(sess.spellTarget)}"` : `✗ A palavra correta é: "${esc(sess.spellTarget)}"`}
     </div>
-    <div class="rating-row">
-      <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
-      <button class="rating-btn r${sess.spellCorrect ? '4' : '2'}" onclick="rateCard(${sess.spellCorrect ? 3 : 1})">
-        <span class="rating-lbl">${sess.spellCorrect ? 'Correto ✓' : 'Difícil'}</span>
-      </button>
-    </div>`}
+    ${getRatingRowHtml(sess.spellCorrect, 'Correto ✓')}`}
   `;
 }
 
@@ -1185,9 +1160,7 @@ function buildSyntaxMode(card) {
       sess.syntaxPool = poolWords.map((w, i) => ({ id: i, word: clean(w) }));
       sess.syntaxTargetWords = valids; 
       sess.isSynonymMatch = true;
-      
     } else {
-      // ✨ LIMPANDO A FRASE PARA ORDENAR:
       const textToOrder = clean(card.example || card.definition);
       const words = textToOrder.split(/\s+/).filter(Boolean);
       sess.syntaxTarget = textToOrder;
@@ -1199,7 +1172,6 @@ function buildSyntaxMode(card) {
   }
   
   const answered = sess.syntaxAnswered;
-
   const ansHtml = sess.syntaxAnswer.map(id => {
     const item = sess.syntaxPool.find(p => p.id === id);
     return `<button class="btn gold sm" style="padding:6px 12px;font-size:14px;width:auto;text-transform:none;letter-spacing:normal" onclick="${answered?'':`syntaxRemove(${id})`}">${esc(item.word)}</button>`;
@@ -1227,47 +1199,41 @@ function buildSyntaxMode(card) {
     </div>
     ${!answered ? `
     <div style="display:flex;gap:8px">
+      <button class="btn ghost" style="flex:1; border-color:var(--gold2); color:var(--gold2)" id="hintBtn" onclick="useHint()">💡 Dica</button>
       <button class="btn ghost" style="flex:1" onclick="syntaxClear()">⟲ Limpar</button>
       <button class="btn gold" style="flex:2" onclick="checkSyntax()">Verificar →</button>
+    </div>
+    <div id="hint-display" style="display:${sess.hintUsed ? 'block' : 'none'}; font-size:14px; color:var(--gold2); margin-top:12px; font-weight:600; text-align:center">
+       ${sess.hintUsed ? `💡 <b>Dica:</b> ${sess.hintText}` : ''}
     </div>` : `
     <div class="type-result ${sess.syntaxCorrect ? 'ok' : 'fail'}" style="margin-bottom:10px">
       ${sess.syntaxCorrect ? `✓ Excelente!` : `✗ Incorreto.`}
       <div style="margin-top:6px;font-size:14px;color:var(--ink);font-style:italic">${feedbackTxt}</div>
     </div>
-    <div class="rating-row">
-      <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
-      <button class="rating-btn r${sess.syntaxCorrect ? '4' : '2'}" onclick="rateCard(${sess.syntaxCorrect ? 3 : 1})"><span class="rating-lbl">${sess.syntaxCorrect ? 'Correto ✓' : 'Difícil'}</span></button>
-    </div>`}
+    ${getRatingRowHtml(sess.syntaxCorrect, 'Correto ✓')}`}
   `;
 }
-
 
 function buildClozeMode(card) {
   const sess = studySession;
   const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
 
   if (!sess.clozeSetup) {
-    let text = "";
-    let blanks = [];
-    let poolWords = [];
-    let isRelList = false;
+    let text = "", blanks = [], poolWords = [], isRelList = false;
 
     if (isRel && !card.example) {
       isRelList = true;
       const valids = getValidAnswers(card);
       const numBlanks = Math.min(3, valids.length);
       blanks = valids.sort(() => Math.random() - 0.5).slice(0, numBlanks);
-      
       text = Array(numBlanks).fill('___').join(' &nbsp;•&nbsp; ');
       
       let others = W.filter(w => w.id !== card.id).flatMap(w => w.cardType === 'sinônimo' || w.cardType === 'antônimo' ? getValidAnswers(w) : [w.word]);
       if (others.length < 6) others = [...others, "inefável", "assertivo", "prolixo", "efêmero", "pragmático"];
       const fakes = [...new Set(others)].filter(opt => !valids.includes(opt)).sort(() => Math.random() - 0.5).slice(0, 5);
-      
       poolWords = [...blanks, ...fakes];
     } else {
       text = isRel ? card.example : card.definition; 
-      
       let matches = [...text.matchAll(/\*([^*]+)\*/g)];
       if (matches.length > 0) {
          matches.forEach(m => blanks.push(m[1].trim()));
@@ -1276,7 +1242,6 @@ function buildClozeMode(card) {
          let words = text.split(/\s+/);
          let eligible = words.filter(w => w.replace(/[.,!?;:"'()]/g, '').length > 4);
          let selectedToHide = eligible.sort(() => Math.random() - 0.5).slice(0, 2); 
-         
          let newTextArr = [];
          words.forEach(w => {
            if (selectedToHide.includes(w)) {
@@ -1297,8 +1262,7 @@ function buildClozeMode(card) {
       const numFakes = Math.max(4, 7 - blanks.length); 
       const fakes = [...new Set(others)]
         .filter(opt => !blanks.includes(clean(opt)) && clean(opt) !== clean(card.word))
-        .sort(() => Math.random() - 0.5)
-        .slice(0, numFakes);
+        .sort(() => Math.random() - 0.5).slice(0, numFakes);
 
       poolWords = [...blanks, ...fakes];
 
@@ -1309,18 +1273,13 @@ function buildClozeMode(card) {
       }
     }
     
-    sess.clozeText = text; 
-    sess.clozeAnswers = blanks; 
-    
+    sess.clozeText = text; sess.clozeAnswers = blanks; 
     sess.clozePool = [...new Set(poolWords)].map((w,i)=>({id:i, word:clean(w)})).sort(() => Math.random() - 0.5);
-    sess.clozeUserAnswers = []; 
-    sess.clozeIsRelList = isRelList;
-    sess.clozeSetup = true;
+    sess.clozeUserAnswers = []; sess.clozeIsRelList = isRelList; sess.clozeSetup = true;
   }
   
   const answered = sess.clozeAnswered;
-  let displayText = sess.clozeText;
-  let slotIndex = 0;
+  let displayText = sess.clozeText, slotIndex = 0;
   
   displayText = displayText.replace(/___/g, () => {
      if (slotIndex < sess.clozeUserAnswers.length) {
@@ -1353,8 +1312,12 @@ function buildClozeMode(card) {
     </div>
     ${!answered ? `
     <div style="display:flex;gap:8px">
+      <button class="btn ghost" style="flex:1; border-color:var(--gold2); color:var(--gold2)" id="hintBtn" onclick="useHint()">💡 Dica</button>
       <button class="btn ghost" style="flex:1" onclick="clozeClear()">⟲ Limpar</button>
       <button class="btn gold" style="flex:2" onclick="checkCloze()">Verificar →</button>
+    </div>
+    <div id="hint-display" style="display:${sess.hintUsed ? 'block' : 'none'}; font-size:14px; color:var(--gold2); margin-top:12px; font-weight:600; text-align:center">
+       ${sess.hintUsed ? `💡 <b>Dica:</b> ${sess.hintText}` : ''}
     </div>` : `
     <div class="type-result ${sess.clozeCorrect ? 'ok' : 'fail'}" style="margin-bottom:10px">
       ${sess.clozeCorrect ? `✓ Excelente!` : `✗ Incorreto.`}
@@ -1362,12 +1325,7 @@ function buildClozeMode(card) {
     <div class="quote" style="margin-bottom:10px; border-color: ${sess.clozeCorrect ? 'var(--green)' : 'var(--red)'}">
        ${esc(clean(card.definition))}
     </div>
-    <div class="rating-row">
-      <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
-      <button class="rating-btn r${sess.clozeCorrect ? '4' : '2'}" onclick="rateCard(${sess.clozeCorrect ? 3 : 1})">
-        <span class="rating-lbl">${sess.clozeCorrect ? 'Correto ✓' : 'Difícil'}</span>
-      </button>
-    </div>`}
+    ${getRatingRowHtml(sess.clozeCorrect, 'Correto ✓')}`}
   `;
 }
 
@@ -1522,6 +1480,9 @@ function rateCard(quality) {
   if (quality >= 2) sess.correct++;
   sess.current++;
   sess.flipped = false;
+
+  // 🧹 ZERA A PENALIDADE DE DICA PARA A PRÓXIMA CARTA!
+  sess.hintUsed = false; sess.hintText = '';
   
   sess.choices = null; sess.choiceAnswered = false;
   sess.typeAnswered = false; sess.contextAnswered = false;
@@ -2640,6 +2601,78 @@ function loadStarter() {
 /* ═══════════════════════════════════════
    UTILS
 ═══════════════════════════════════════ */
+/*dicas*/
+// ✨ MOTOR DE DICAS E PENALIDADES
+function useHint() {
+  const sess = studySession;
+  if (!sess || sess.hintUsed) return;
+  sess.hintUsed = true;
+  
+  const card = sess.queue[sess.current];
+  let target = card.word;
+  const mode = sess.currentAdaptiveMode || studyMode;
+  
+  // Acha qual é a palavra alvo real dependendo do jogo
+  if (mode === 'scramble' && sess.scrambleTarget) target = sess.scrambleTarget;
+  else if (mode === 'spell' && sess.spellTarget) target = sess.spellTarget;
+  else if (mode === 'syntax' && sess.syntaxTarget) target = sess.syntaxTarget.split(/\s+/)[0];
+  else if (mode === 'cloze' && sess.clozeAnswers && sess.clozeAnswers.length > 0) target = sess.clozeAnswers[0];
+  else if ((mode === 'type' || mode === 'context') && (card.cardType === 'sinônimo' || card.cardType === 'antônimo')) {
+     const valids = getValidAnswers(card);
+     target = valids[Math.floor(Math.random() * valids.length)];
+  }
+
+  // Monta o texto da dica (metade da palavra ou a primeira palavra da frase)
+  let hintText = '';
+  if (mode === 'syntax') {
+     hintText = `A frase começa com: "${target}"`;
+  } else if (mode === 'cloze') {
+     hintText = `A primeira lacuna é: "${target}"`;
+  } else {
+     const cleanTarget = target.replace(/[\s\u200B-\u200D\uFEFF]/g, '');
+     const showLen = Math.max(2, Math.floor(cleanTarget.length / 2));
+     hintText = `Começa com: "${cleanTarget.substring(0, showLen).toUpperCase()}..."`;
+  }
+  sess.hintText = hintText;
+
+  // Injeta no HTML sem apagar o que o usuário já digitou!
+  const hintDiv = document.getElementById('hint-display');
+  if (hintDiv) {
+     hintDiv.innerHTML = `💡 <b>Dica:</b> ${esc(hintText)}`;
+     hintDiv.style.display = 'block';
+  }
+  const hintBtn = document.getElementById('hintBtn');
+  if (hintBtn) hintBtn.style.opacity = '0.5';
+
+  toast('Dica ativada! Nota máxima travada em "Difícil".', 'err'); // 'err' faz o toast ficar vermelho para alertar!
+}
+
+// ✨ GERADOR DE BOTÕES COM TRAVA DE SM-2
+function getRatingRowHtml(isCorrect, correctLabel = 'Correto ✓') {
+  const sess = studySession;
+  if (!sess) return '';
+  
+  if (sess.hintUsed && isCorrect) {
+     // Acertou, mas burlou! Ganha nota 1 (Difícil) ao invés de nota 3 (Fácil)
+     return `
+     <div class="rating-row">
+       <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
+       <button class="rating-btn r2" onclick="rateCard(1)" style="border-color:var(--gold); background:rgba(212,175,55,0.1)">
+         <span class="rating-lbl" style="color:var(--gold)">Com Dica (Difícil)</span>
+       </button>
+     </div>`;
+  }
+  
+  // Fluxo Normal
+  return `
+  <div class="rating-row">
+    <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
+    <button class="rating-btn r${isCorrect ? '4' : '2'}" onclick="rateCard(${isCorrect ? 3 : 1})">
+      <span class="rating-lbl">${isCorrect ? correctLabel : 'Difícil'}</span>
+    </button>
+  </div>`;
+}
+// funçao para colorir os nomes sinonimos antonimos etc.
 function hl(txt) {
   return `<strong style="color:#e024ff; font-size:1.15em; text-transform:uppercase; text-shadow: 0px 0px 8px rgba(224,36,255,0.6);">${txt}</strong>`;
 }
