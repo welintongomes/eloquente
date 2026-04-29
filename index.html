@@ -137,7 +137,7 @@ select.inp{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.
 .word-actions{display:flex;gap:4px;flex-shrink:0;}
 .mini-btn{margin-bottom: 10px;width:100%;height:28px;border-radius:var(--r);border:1px solid var(--border);background:transparent;color:var(--stone2);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;transition:all .15s;}
 .mini-btn:active{transform:scale(.88);}
-.mini-btn.danger{width:28px;border-color:rgba(192,57,43,.25);color:var(--red2);}
+.mini-btn.danger{width:48px;border-color:rgba(192,57,43,.25);color:var(--red2);}
 .mini-btn.edit{border-color:rgba(201,168,76,.2);color:var(--gold);}
 
 /* ── STATS ── */
@@ -726,7 +726,7 @@ function buildStudyCard() {
 function buildFlashMode(card, intervals) {
   const flipped = studySession.flipped;
   const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
-  const typeLbl = isRel ? card.cardType.toUpperCase() : 'PALAVRA';
+  const typeLbl = isRel ? hl(card.cardType) : 'PALAVRA';
 
   return `
     <div id="flashcard-wrap" onclick="flipCard()">
@@ -763,50 +763,35 @@ function buildChoiceMode(card) {
     const valids = getValidAnswers(card);
     const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
     
-    // Pega as opções válidas
     sess.validChoices = valids.sort(() => Math.random() - 0.5).slice(0, isRel ? 3 : 1);
     const totalOptions = isRel ? 6 : 4;
     
-    // ✨ INTELIGÊNCIA EM CASCATA: Filtra opções falsas com precisão cirúrgica
     let pool = W.filter(w => w.id !== card.id);
     const isLong = (c) => ['técnica', 'falácia', 'citação'].includes(c.cardType || 'normal');
     
-    let t1 = pool.filter(w => w.cardType === card.cardType && w.wordClass === card.wordClass && card.wordClass); // 1. Mesma classe gramatical
-    let t2 = pool.filter(w => w.cardType === card.cardType); // 2. Mesmo tipo de carta
-    let t3 = pool.filter(w => isLong(w) === isLong(card)); // 3. Mesmo formato visual
+    let t1 = pool.filter(w => w.cardType === card.cardType && w.wordClass === card.wordClass && card.wordClass);
+    let t2 = pool.filter(w => w.cardType === card.cardType);
+    let t3 = pool.filter(w => isLong(w) === isLong(card));
 
     let othersCards = t1.length >= 3 ? t1 : (t2.length >= 3 ? t2 : (t3.length >= 3 ? t3 : pool));
-    
     let others = [];
 
-    // ✨ O MURO DE BERLIM: Separa estritamente palavras de frases!
     if (isRel) {
-      // Universo 1: Sinônimos. Queremos SÓ palavras curtas. NUNCA a definição (frase) de uma carta normal!
       others = othersCards.flatMap(w => (w.cardType === 'sinônimo' || w.cardType === 'antônimo') ? getValidAnswers(w) : [w.word]);
-      
-      // Se ainda faltar, pega palavras soltas de qualquer lugar do banco
-      if (others.length < totalOptions) {
-        others = [...others, ...pool.map(w => w.word)];
-      }
+      if (others.length < totalOptions) others = [...others, ...pool.map(w => w.word)];
     } else {
-      // Universo 2: Cartas Normais. Queremos SÓ frases/definições. NUNCA uma palavra curta perdida no meio.
       others = othersCards.flatMap(w => (w.cardType === 'sinônimo' || w.cardType === 'antônimo') ? [] : getValidAnswers(w));
-      
-      // Se ainda faltar, pega definições de qualquer lugar (menos dos sinônimos)
-      if (others.length < totalOptions) {
-        others = [...others, ...pool.filter(w => w.cardType !== 'sinônimo' && w.cardType !== 'antônimo').map(w => w.definition)];
-      }
+      // ✨ LIMPANDO OS DISTRATORES:
+      if (others.length < totalOptions) others = [...others, ...pool.filter(w => w.cardType !== 'sinônimo' && w.cardType !== 'antônimo').map(w => clean(w.definition))];
     }
     
-    // Remove duplicatas e respostas que já sejam a correta
     others = [...new Set(others)].filter(opt => !sess.validChoices.includes(opt));
-    
     const wrongs = others.sort(() => Math.random() - 0.5).slice(0, totalOptions - sess.validChoices.length);
     sess.choices = [...sess.validChoices, ...wrongs].sort(() => Math.random() - 0.5);
   }
   
   const answered = sess.choiceAnswered;
-  const typeLbl = card.cardType === 'sinônimo' ? 'Selecione um SINÔNIMO para:' : (card.cardType === 'antônimo' ? 'Selecione um ANTÔNIMO para:' : 'Qual a definição de:');
+  const typeLbl = card.cardType === 'sinônimo' ? `Selecione um ${hl('sinônimo')} para:` : (card.cardType === 'antônimo' ? `Selecione um ${hl('antônimo')} para:` : 'Qual a definição de:');
 
   return `
     <div class="card" style="margin-bottom:12px">
@@ -833,6 +818,557 @@ function buildChoiceMode(card) {
         <button class="rating-btn r${sess.choiceCorrect ? '4' : '2'}" onclick="rateCard(${sess.choiceCorrect ? 3 : 1})"><span class="rating-lbl">${sess.choiceCorrect ? 'Fácil ✓' : 'Difícil'}</span></button>
       </div>
     </div>` : ''}`;
+}
+
+function buildRevChoiceMode(card) {
+  const sess = studySession;
+  if (!sess.revChoices) {
+    const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
+    let pool = W.filter(w => w.id !== card.id);
+    const isLong = (c) => ['técnica', 'falácia', 'citação'].includes(c.cardType || 'normal');
+    
+    let t1 = pool.filter(w => w.cardType === card.cardType && w.wordClass === card.wordClass && card.wordClass);
+    let t2 = pool.filter(w => w.cardType === card.cardType);
+    let t3 = pool.filter(w => isLong(w) === isLong(card));
+
+    let othersCards = t1.length >= 3 ? t1 : (t2.length >= 3 ? t2 : (t3.length >= 3 ? t3 : pool));
+    if (othersCards.length < 3) othersCards = W.filter(w => w.id !== card.id);
+    
+    const shuffled = othersCards.sort(() => Math.random() - .5).slice(0, 3);
+    sess.revChoices = [...shuffled.map(w => w.word), card.word].sort(() => Math.random() - .5);
+    
+    // ✨ LIMPANDO A PERGUNTA INVERSA:
+    let def = clean(card.definition);
+    if (isRel) {
+       const valids = getValidAnswers(card);
+       def = valids[Math.floor(Math.random() * valids.length)];
+    }
+    sess.revChoicePrompt = def;
+  }
+  
+  const answered = sess.revChoiceAnswered;
+  const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
+  const promptTxt = isRel ? `Qual palavra possui este ${hl(card.cardType)}:` : 'Qual é a palavra para esta definição:';
+
+  return `
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-body" style="text-align:center">
+        <div class="fc-type" style="margin-bottom:10px">${promptTxt}</div>
+        ${renderVisual(card)}<div class="fc-definition" style="font-size:18px;line-height:1.6">${esc(sess.revChoicePrompt)}</div>
+      </div>
+    </div>
+    <div id="choices">
+      ${sess.revChoices.map((ch, i) => {
+        let cls = 'choice-opt';
+        if (answered) {
+          if (ch === card.word) cls += ' correct';
+          else if (ch === sess.revChoiceSelected) cls += ' wrong reveal';
+          else cls += ' reveal';
+        }
+        return `<div class="${cls}" style="font-family:'Cinzel',serif;font-style:normal;font-weight:600;text-align:center;font-size:16px" onclick="${answered ? '' : `revChoiceAnswer(${i})`}">${esc(ch)}</div>`;
+      }).join('')}
+    </div>
+    ${answered ? `
+    <div style="margin-top:6px">
+      <div class="rating-row">
+        <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
+        <button class="rating-btn r${sess.revChoiceCorrect ? '4' : '2'}" onclick="rateCard(${sess.revChoiceCorrect ? 3 : 1})">
+          <span class="rating-lbl">${sess.revChoiceCorrect ? 'Fácil ✓' : 'Difícil'}</span>
+        </button>
+      </div>
+    </div>` : ''}`;
+}
+
+function buildTFMode(card) {
+  const sess = studySession;
+  if (!sess.tfSetup) {
+    const isCorrect = Math.random() > 0.5;
+    let def = '';
+    const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
+    
+    // ✨ LIMPANDO A RESPOSTA CORRETA:
+    const correctAnswers = getValidAnswers(card);
+    const correctDef = isRel ? correctAnswers[Math.floor(Math.random() * correctAnswers.length)] : clean(card.definition);
+
+    if (!isCorrect && W.length > 1) {
+      let pool = W.filter(w => w.id !== card.id);
+      const isLong = (c) => ['técnica', 'falácia', 'citação'].includes(c.cardType || 'normal');
+      
+      let t1 = pool.filter(w => w.cardType === card.cardType && w.wordClass === card.wordClass && card.wordClass);
+      let t2 = pool.filter(w => w.cardType === card.cardType);
+      let t3 = pool.filter(w => isLong(w) === isLong(card));
+
+      let othersCards = t1.length >= 1 ? t1 : (t2.length >= 1 ? t2 : (t3.length >= 1 ? t3 : pool));
+      let others = [];
+      
+      if (isRel) {
+        others = othersCards.flatMap(w => (w.cardType === 'sinônimo' || w.cardType === 'antônimo') ? getValidAnswers(w) : [w.word]);
+        if (others.length === 0) others = pool.map(w => w.word);
+      } else {
+        others = othersCards.flatMap(w => (w.cardType === 'sinônimo' || w.cardType === 'antônimo') ? [] : getValidAnswers(w));
+        // ✨ LIMPANDO OS DISTRATORES AQUI TAMBÉM:
+        if (others.length === 0) others = pool.filter(w => w.cardType !== 'sinônimo' && w.cardType !== 'antônimo').map(w => clean(w.definition));
+      }
+      
+      def = others[Math.floor(Math.random() * others.length)] || correctDef;
+      sess.tfIsCorrect = def === correctDef;
+    } else {
+      sess.tfIsCorrect = true;
+      def = correctDef;
+    }
+    sess.tfDefinition = def;
+    sess.tfSetup = true;
+  }
+  
+  const answered = sess.tfAnswered;
+  const typeText = card.cardType === 'sinônimo' ? `Tem como ${hl('sinônimo')}:` : (card.cardType === 'antônimo' ? `Tem como ${hl('antônimo')}:` : 'Significa:');
+
+  return `
+    <div class="card" style="margin-bottom:12px;border:2px solid ${answered ? (sess.tfUserCorrect ? 'var(--green)' : 'var(--red)') : 'var(--border)'}">
+      <div class="card-body" style="text-align:center;padding:24px 16px">
+        ${renderVisual(card)}<div class="fc-word" style="font-size:32px;margin-bottom:16px">${esc(card.word)}</div>
+        <div style="font-size:13px;color:var(--stone2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">${typeText}</div>
+        <div class="fc-definition" style="font-size:18px;">"${esc(sess.tfDefinition)}"</div>
+      </div>
+    </div>
+    ${!answered ? `
+    <div class="btn-row" style="margin-top:16px">
+      <button class="btn success" style="padding:14px;font-size:14px" onclick="checkTF(true)">✓ Verdadeiro</button>
+      <button class="btn danger" style="padding:14px;font-size:14px" onclick="checkTF(false)">✕ Falso</button>
+    </div>` : `
+    <div class="type-result ${sess.tfUserCorrect ? 'ok' : 'fail'}" style="margin-bottom:10px">
+      ${sess.tfUserCorrect ? '✓ Acertou!' : `✗ Errou. A resposta era <b>${sess.tfIsCorrect ? 'Verdadeiro' : 'Falso'}</b>.`}
+    </div>
+    ${!sess.tfIsCorrect && !sess.tfUserCorrect ? `<div class="quote" style="margin-bottom:10px">${card.cardType === 'sinônimo' ? 'Sinônimos reais:' : 'Definição real:'} ${esc(clean(card.definition))}</div>` : ''}
+    <div class="rating-row">
+      <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
+      <button class="rating-btn r${sess.tfUserCorrect ? '4' : '2'}" onclick="rateCard(${sess.tfUserCorrect ? 3 : 1})">
+        <span class="rating-lbl">${sess.tfUserCorrect ? 'Correto ✓' : 'Difícil'}</span>
+      </button>
+    </div>`}`;
+}
+
+function buildTypeMode(card) {
+  const sess = studySession;
+  const answered = sess.typeAnswered;
+  const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
+  
+  const promptTxt = isRel ? `Digite UM ${hl(card.cardType)} para:` : 'Escreva a palavra para esta definição:';
+  // ✨ LIMPANDO O TEXTO EXIBIDO:
+  const displayTxt = isRel ? card.word : clean(card.definition);
+
+  return `
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-body" style="text-align:center">
+        <div class="fc-type" style="margin-bottom:8px">${promptTxt}</div>
+        ${renderVisual(card)}
+        <div class="fc-definition" style="font-size:22px;line-height:1.4;color:var(--gold2)">${esc(displayTxt)}</div>
+      </div>
+    </div>
+    ${!answered ? `
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <input class="inp" id="typeInput" placeholder="Digite aqui..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" onkeydown="if(event.key==='Enter')checkType()">
+      <button class="btn gold" style="width:auto;padding:10px 16px" onclick="checkType()">→</button>
+    </div>` : `
+    <div class="type-result ${sess.typeCorrect ? 'ok' : 'fail'}" style="margin-bottom:10px">
+      ${sess.typeCorrect ? '✓ Excelente!' : '✗ Incorreto.'} 
+      <div style="font-size:13px;margin-top:4px;color:var(--stone2)">
+        ${isRel ? `Opções válidas: <b>${esc(clean(card.definition))}</b>` : `A resposta é: <b>${esc(card.word)}</b>`}
+      </div>
+    </div>
+    <div class="rating-row">
+      <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
+      <button class="rating-btn r${sess.typeCorrect ? '4' : '2'}" onclick="rateCard(${sess.typeCorrect ? 3 : 1})"><span class="rating-lbl">${sess.typeCorrect ? 'Correto ✓' : 'Difícil'}</span></button>
+    </div>`}`;
+}
+
+function buildContextMode(card) {
+  const sess = studySession;
+  const answered = sess.contextAnswered;
+  const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
+  
+  let blanked = '';
+  let revealed = '';
+  
+  // ✨ LIMPANDO O EXEMPLO PARA ESCONDER:
+  if (card.example) {
+    blanked = esc(clean(card.example)).replace(new RegExp('('+escReg(card.word)+')', 'gi'), '______');
+    revealed = esc(clean(card.example)).replace(new RegExp('('+escReg(card.word)+')', 'gi'), '<mark>$1</mark>');
+  } else {
+    if (isRel) {
+      blanked = `<span style="font-size:14px;color:var(--stone)">Palavra base:</span><br><b style="color:var(--gold2);font-size:20px">${esc(card.word)}</b><br><br>Digite UM ${hl(card.cardType)}: ______`;
+      revealed = `<span style="font-size:14px;color:var(--stone)">Palavra base:</span><br><b style="color:var(--gold2);font-size:20px">${esc(card.word)}</b>`;
+    } else {
+      blanked = `<span style="font-size:14px;color:var(--stone)">Significa:</span><br><i>"${esc(clean(card.definition))}"</i><br><br>A palavra é: ______`;
+      revealed = `<span style="font-size:14px;color:var(--stone)">Significa:</span><br><i>"${esc(clean(card.definition))}"</i><br><br>A palavra é: <mark>${esc(card.word)}</mark>`;
+    }
+  }
+  
+  const promptTxt = isRel ? `Complete com UM ${hl(card.cardType)}:` : 'Complete a lacuna:';
+
+  let html = `
+    <div class="context-card">
+      <div class="context-q">${promptTxt}</div>
+      ${renderVisual(card)}<div class="context-text" id="ctxText">${answered ? revealed : blanked}</div>
+    </div>`;
+
+  if (!isRel) {
+    html += `
+    <div style="margin-bottom:10px">
+      <div class="lbl">Definição contextual</div>
+      <div style="font-size:15px;color:var(--ink2);font-style:italic;line-height:1.7">${esc(clean(card.definition))}</div>
+    </div>`;
+  }
+
+  if (!answered) {
+    html += `
+    <div style="display:flex;gap:8px">
+      <input class="inp" id="ctxInput" placeholder="Escreva a palavra..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" onkeydown="if(event.key==='Enter')checkContext()">
+      <button class="btn gold" style="width:auto;padding:10px 16px" onclick="checkContext()">→</button>
+    </div>
+    <button class="btn ghost" style="margin-top:8px" onclick="skipContext()">Ver resposta →</button>`;
+  } else {
+    html += `
+    <div class="type-result ${sess.contextCorrect ? 'ok' : 'fail'}" style="margin-bottom:10px">
+      ${sess.contextCorrect ? `✓ Excelente!` : `✗ Incorreto.`}
+    </div>`;
+
+    if (isRel) {
+       html += `
+       <div class="quote" style="margin-bottom:10px; border-color: ${sess.contextCorrect ? 'var(--green)' : 'var(--red)'}">
+         <b>Opções válidas:</b><br> 
+         <span style="color:var(--ink)">${esc(clean(card.definition))}</span>
+       </div>`;
+    } else if (!sess.contextCorrect) {
+       html += `<div class="quote" style="margin-bottom:10px; border-color: var(--red)">A palavra correta era: "${esc(card.word)}"</div>`;
+    }
+
+    html += `
+    <div class="rating-row">
+      <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
+      <button class="rating-btn r${sess.contextCorrect ? '4' : '2'}" onclick="rateCard(${sess.contextCorrect ? 3 : 1})">
+        <span class="rating-lbl">${sess.contextCorrect ? 'Perfeito ✓' : 'Difícil'}</span>
+      </button>
+    </div>`;
+  }
+  return html;
+}
+
+function buildScrambleMode(card) {
+  const sess = studySession;
+  if (!sess.scrambleSetup) {
+    let target = card.word;
+    if (card.cardType === 'sinônimo' || card.cardType === 'antônimo') {
+      const valids = getValidAnswers(card);
+      target = valids[Math.floor(Math.random() * valids.length)];
+    }
+    
+    sess.scrambleTarget = target.normalize('NFC'); 
+    const letters = sess.scrambleTarget.replace(/[\s\u200B-\u200D\uFEFF]/g, '').split('');
+    sess.scrambledWord = letters.sort(() => Math.random() - 0.5).join('  ').toUpperCase();
+    sess.scrambleSetup = true;
+  }
+  
+  const answered = sess.scrambleAnswered;
+  const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
+  const promptTxt = isRel ? `Desembaralhe UM ${hl(card.cardType)} de:` : `Desembaralhe as letras:`;
+  // ✨ LIMPANDO O TEXTO:
+  const displayTxt = isRel ? card.word : clean(card.definition);
+
+  return `
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-body" style="text-align:center">
+        <div class="fc-type" style="margin-bottom:8px">${promptTxt}</div>
+        ${renderVisual(card)}
+        <div style="font-family:'JetBrains Mono',monospace;font-size:24px;color:var(--gold2);letter-spacing:4px;margin-bottom:14px;padding:10px;background:rgba(0,0,0,0.3);border-radius:var(--r)">${esc(sess.scrambledWord)}</div>
+        <div class="fc-definition" style="font-size:16px;">${esc(displayTxt)}</div>
+      </div>
+    </div>
+    ${!answered ? `
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <input class="inp" id="scrambleInput" placeholder="Digite a palavra..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" onkeydown="if(event.key==='Enter')checkScramble()">
+      <button class="btn gold" style="width:auto;padding:10px 16px" onclick="checkScramble()">→</button>
+    </div>` : `
+    <div class="type-result ${sess.scrambleCorrect ? 'ok' : 'fail'}" style="margin-bottom:10px">
+      ${sess.scrambleCorrect ? `✓ Perfeito! "${esc(sess.scrambleTarget)}"` : `✗ A palavra correta é: "${esc(sess.scrambleTarget)}"`}
+    </div>
+    <div class="rating-row">
+      <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
+      <button class="rating-btn r${sess.scrambleCorrect ? '4' : '2'}" onclick="rateCard(${sess.scrambleCorrect ? 3 : 1})">
+        <span class="rating-lbl">${sess.scrambleCorrect ? 'Correto ✓' : 'Difícil'}</span>
+      </button>
+    </div>`}`;
+}
+
+function buildSpellMode(card) {
+  const sess = studySession;
+  if (!sess.spellSetup) {
+    let target = card.word;
+    if (card.cardType === 'sinônimo' || card.cardType === 'antônimo') {
+      const valids = getValidAnswers(card);
+      target = valids[Math.floor(Math.random() * valids.length)];
+    }
+    
+    sess.spellTarget = target.normalize('NFC'); 
+    const chars = sess.spellTarget.replace(/[\s\u200B-\u200D\uFEFF]/g, '').toUpperCase().split('');
+    sess.spellPool = chars.map((char, i) => ({ id: i, char })).sort(() => Math.random() - 0.5);
+    sess.spellAnswer = []; 
+    sess.spellSetup = true;
+  }
+  
+  const answered = sess.spellAnswered;
+  const ansHtml = sess.spellAnswer.map(id => {
+    const item = sess.spellPool.find(p => p.id === id);
+    return `<button class="btn gold sm" style="width:38px;height:38px;padding:0;font-size:18px;font-weight:700" onclick="${answered ? '' : `spellRemove(${id})`}">${item.char}</button>`;
+  }).join('');
+
+  const availHtml = sess.spellPool.filter(p => !sess.spellAnswer.includes(p.id)).map(item => {
+    return `<button class="btn ghost sm" style="width:38px;height:38px;padding:0;font-size:18px;font-weight:700;border-color:var(--border2)" onclick="${answered ? '' : `spellAdd(${item.id})`}">${item.char}</button>`;
+  }).join('');
+
+  const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
+  const promptTxt = isRel ? `Forme UM ${hl(card.cardType)} para:` : `Toque para formar a palavra:`;
+  // ✨ LIMPANDO O TEXTO:
+  const displayTxt = isRel ? card.word : clean(card.definition);
+
+  return `
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-body" style="text-align:center">
+        <div class="fc-type" style="margin-bottom:8px">${promptTxt}</div>
+        ${renderVisual(card)}
+        <div class="fc-definition" style="font-size:16px;margin-bottom:16px">${esc(displayTxt)}</div>
+
+        <div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;align-items:center;min-height:54px;padding:8px;background:rgba(0,0,0,0.3);border-radius:var(--r);border:1px dashed var(--border3);margin-bottom:16px">
+          ${ansHtml}
+        </div>
+
+        ${!answered ? `
+        <div style="display:flex;flex-wrap:wrap;gap:20px;justify-content:center">
+          ${availHtml}
+        </div>` : ''}
+      </div>
+    </div>
+
+    ${!answered ? `
+    <div style="display:flex;gap:8px">
+      <button class="btn ghost" style="flex:1" onclick="spellClear()">⟲ Limpar</button>
+      <button class="btn gold" style="flex:2" onclick="checkSpell()">Verificar →</button>
+    </div>` : `
+    <div class="type-result ${sess.spellCorrect ? 'ok' : 'fail'}" style="margin-bottom:10px">
+      ${sess.spellCorrect ? `✓ Excelente! "${esc(sess.spellTarget)}"` : `✗ A palavra correta é: "${esc(sess.spellTarget)}"`}
+    </div>
+    <div class="rating-row">
+      <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
+      <button class="rating-btn r${sess.spellCorrect ? '4' : '2'}" onclick="rateCard(${sess.spellCorrect ? 3 : 1})">
+        <span class="rating-lbl">${sess.spellCorrect ? 'Correto ✓' : 'Difícil'}</span>
+      </button>
+    </div>`}
+  `;
+}
+
+function buildSyntaxMode(card) {
+  const sess = studySession;
+  const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
+
+  if (!sess.syntaxSetup) {
+    if (isRel && !card.example) {
+      const valids = getValidAnswers(card);
+      const targetsToFind = valids.sort(() => Math.random() - 0.5).slice(0, 4);
+      sess.syntaxNeededCount = Math.min(3, targetsToFind.length);
+
+      let others = W.filter(w => w.id !== card.id).flatMap(w => w.cardType === 'sinônimo' || w.cardType === 'antônimo' ? getValidAnswers(w) : [w.word]);
+      if (others.length < 6) others = [...others, "inefável", "assertivo", "prolixo", "efêmero", "pragmático", "eloquente"];
+      
+      const fakes = [...new Set(others)].filter(opt => !valids.includes(opt)).sort(() => Math.random() - 0.5).slice(0, 6);
+      const poolWords = [...targetsToFind, ...fakes].sort(() => Math.random() - 0.5);
+      
+      sess.syntaxPool = poolWords.map((w, i) => ({ id: i, word: clean(w) }));
+      sess.syntaxTargetWords = valids; 
+      sess.isSynonymMatch = true;
+      
+    } else {
+      // ✨ LIMPANDO A FRASE PARA ORDENAR:
+      const textToOrder = clean(card.example || card.definition);
+      const words = textToOrder.split(/\s+/).filter(Boolean);
+      sess.syntaxTarget = textToOrder;
+      sess.syntaxPool = words.map((w, i) => ({ id: i, word: w })).sort(() => Math.random() - 0.5);
+      sess.isSynonymMatch = false;
+    }
+    sess.syntaxAnswer = [];
+    sess.syntaxSetup = true;
+  }
+  
+  const answered = sess.syntaxAnswered;
+
+  const ansHtml = sess.syntaxAnswer.map(id => {
+    const item = sess.syntaxPool.find(p => p.id === id);
+    return `<button class="btn gold sm" style="padding:6px 12px;font-size:14px;width:auto;text-transform:none;letter-spacing:normal" onclick="${answered?'':`syntaxRemove(${id})`}">${esc(item.word)}</button>`;
+  }).join('');
+
+  const availHtml = sess.syntaxPool.filter(p => !sess.syntaxAnswer.includes(p.id)).map(item => {
+    return `<button class="btn ghost sm" style="padding:6px 12px;font-size:14px;width:auto;border-color:var(--border2);text-transform:none;letter-spacing:normal" onclick="${answered?'':`syntaxAdd(${item.id})`}">${esc(item.word)}</button>`;
+  }).join('');
+
+  const promptTxt = sess.isSynonymMatch ? `Selecione pelo menos ${sess.syntaxNeededCount} ${hl(card.cardType + 's')} válidos:` : 'Ordene a frase/conceito:';
+  let feedbackTxt = sess.isSynonymMatch ? `<b>Opções válidas:</b> ${esc(clean(card.definition))}` : `"${esc(sess.syntaxTarget)}"`;
+
+  return `
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-body" style="text-align:center">
+        <div class="fc-type" style="margin-bottom:8px">${promptTxt}</div>
+        ${renderVisual(card)}
+        ${card.cardType !== 'citação' ? `<div class="fc-word" style="font-size:20px;margin-bottom:12px">${esc(card.word)}</div>` : ''}
+        
+        <div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;align-items:center;min-height:60px;padding:12px;background:rgba(0,0,0,0.3);border-radius:var(--r);border:1px dashed var(--border3);margin-bottom:16px">
+          ${ansHtml}
+        </div>
+        ${!answered ? `<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center">${availHtml}</div>` : ''}
+      </div>
+    </div>
+    ${!answered ? `
+    <div style="display:flex;gap:8px">
+      <button class="btn ghost" style="flex:1" onclick="syntaxClear()">⟲ Limpar</button>
+      <button class="btn gold" style="flex:2" onclick="checkSyntax()">Verificar →</button>
+    </div>` : `
+    <div class="type-result ${sess.syntaxCorrect ? 'ok' : 'fail'}" style="margin-bottom:10px">
+      ${sess.syntaxCorrect ? `✓ Excelente!` : `✗ Incorreto.`}
+      <div style="margin-top:6px;font-size:14px;color:var(--ink);font-style:italic">${feedbackTxt}</div>
+    </div>
+    <div class="rating-row">
+      <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
+      <button class="rating-btn r${sess.syntaxCorrect ? '4' : '2'}" onclick="rateCard(${sess.syntaxCorrect ? 3 : 1})"><span class="rating-lbl">${sess.syntaxCorrect ? 'Correto ✓' : 'Difícil'}</span></button>
+    </div>`}
+  `;
+}
+
+
+function buildClozeMode(card) {
+  const sess = studySession;
+  const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
+
+  if (!sess.clozeSetup) {
+    let text = "";
+    let blanks = [];
+    let poolWords = [];
+    let isRelList = false;
+
+    if (isRel && !card.example) {
+      isRelList = true;
+      const valids = getValidAnswers(card);
+      const numBlanks = Math.min(3, valids.length);
+      blanks = valids.sort(() => Math.random() - 0.5).slice(0, numBlanks);
+      
+      text = Array(numBlanks).fill('___').join(' &nbsp;•&nbsp; ');
+      
+      let others = W.filter(w => w.id !== card.id).flatMap(w => w.cardType === 'sinônimo' || w.cardType === 'antônimo' ? getValidAnswers(w) : [w.word]);
+      if (others.length < 6) others = [...others, "inefável", "assertivo", "prolixo", "efêmero", "pragmático"];
+      const fakes = [...new Set(others)].filter(opt => !valids.includes(opt)).sort(() => Math.random() - 0.5).slice(0, 5);
+      
+      poolWords = [...blanks, ...fakes];
+    } else {
+      text = isRel ? card.example : card.definition; 
+      
+      let matches = [...text.matchAll(/\*([^*]+)\*/g)];
+      if (matches.length > 0) {
+         matches.forEach(m => blanks.push(m[1].trim()));
+         text = text.replace(/\*([^*]+)\*/g, '___');
+      } else {
+         let words = text.split(/\s+/);
+         let eligible = words.filter(w => w.replace(/[.,!?;:"'()]/g, '').length > 4);
+         let selectedToHide = eligible.sort(() => Math.random() - 0.5).slice(0, 2); 
+         
+         let newTextArr = [];
+         words.forEach(w => {
+           if (selectedToHide.includes(w)) {
+             let cleanWord = w.replace(/[.,!?;:"'()]/g, '');
+             blanks.push(cleanWord); 
+             newTextArr.push(w.replace(cleanWord, '___'));
+             selectedToHide.splice(selectedToHide.indexOf(w), 1);
+           } else {
+             newTextArr.push(w);
+           }
+         });
+         text = newTextArr.join(' ');
+      }
+      
+      let others = W.filter(w => w.id !== card.id).map(w => w.word);
+      if (others.length < 8) others = [...others, "intrínseco", "efêmero", "pragmático", "eloquente", "inefável", "prolixo", "sagaz", "peculiar"];
+      
+      const numFakes = Math.max(4, 7 - blanks.length); 
+      const fakes = [...new Set(others)]
+        .filter(opt => !blanks.includes(clean(opt)) && clean(opt) !== clean(card.word))
+        .sort(() => Math.random() - 0.5)
+        .slice(0, numFakes);
+
+      poolWords = [...blanks, ...fakes];
+
+      if (isRel) {
+         const valids = getValidAnswers(card);
+         const extraSyns = valids.filter(v => !poolWords.includes(v));
+         poolWords = [...poolWords, ...extraSyns];
+      }
+    }
+    
+    sess.clozeText = text; 
+    sess.clozeAnswers = blanks; 
+    
+    sess.clozePool = [...new Set(poolWords)].map((w,i)=>({id:i, word:clean(w)})).sort(() => Math.random() - 0.5);
+    sess.clozeUserAnswers = []; 
+    sess.clozeIsRelList = isRelList;
+    sess.clozeSetup = true;
+  }
+  
+  const answered = sess.clozeAnswered;
+  let displayText = sess.clozeText;
+  let slotIndex = 0;
+  
+  displayText = displayText.replace(/___/g, () => {
+     if (slotIndex < sess.clozeUserAnswers.length) {
+        const pickedId = sess.clozeUserAnswers[slotIndex++];
+        const word = sess.clozePool.find(p=>p.id === pickedId).word;
+        return `<span style="color:var(--gold2);text-decoration:underline;cursor:pointer" onclick="${answered?'':`clozeRemove(${pickedId})`}">${esc(word)}</span>`;
+     } else {
+        slotIndex++;
+        return `<span style="opacity:0.3">______</span>`;
+     }
+  });
+
+  const availHtml = sess.clozePool.filter(p => !sess.clozeUserAnswers.includes(p.id)).map(item => {
+    return `<button class="btn ghost sm" style="padding:6px 12px;font-size:14px;width:auto;border-color:var(--border2);text-transform:none;letter-spacing:normal" onclick="${answered?'':`clozeAdd(${item.id})`}">${esc(item.word)}</button>`;
+  }).join('');
+
+  const promptTxt = sess.clozeIsRelList ? `Selecione ${sess.clozeAnswers.length} ${hl(card.cardType + 's')}:` : 'Preencha as lacunas na ordem:';
+
+  return `
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-body" style="text-align:center">
+        <div class="fc-type" style="margin-bottom:8px">${promptTxt}</div>
+        ${renderVisual(card)}
+        ${card.cardType !== 'citação' ? `<div class="fc-word" style="font-size:20px;margin-bottom:12px">${esc(card.word)}</div>` : ''}
+        <div style="font-size:18px;line-height:1.6;color:var(--ink);font-style:italic;margin-bottom:16px;text-align:${sess.clozeIsRelList ? 'center' : 'left'};padding:10px;background:rgba(0,0,0,0.2);border-radius:var(--r)">
+          ${sess.clozeIsRelList ? displayText : `"${displayText}"`}
+        </div>
+        ${!answered && availHtml ? `<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center">${availHtml}</div>` : ''}
+      </div>
+    </div>
+    ${!answered ? `
+    <div style="display:flex;gap:8px">
+      <button class="btn ghost" style="flex:1" onclick="clozeClear()">⟲ Limpar</button>
+      <button class="btn gold" style="flex:2" onclick="checkCloze()">Verificar →</button>
+    </div>` : `
+    <div class="type-result ${sess.clozeCorrect ? 'ok' : 'fail'}" style="margin-bottom:10px">
+      ${sess.clozeCorrect ? `✓ Excelente!` : `✗ Incorreto.`}
+    </div>
+    <div class="quote" style="margin-bottom:10px; border-color: ${sess.clozeCorrect ? 'var(--green)' : 'var(--red)'}">
+       ${esc(clean(card.definition))}
+    </div>
+    <div class="rating-row">
+      <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
+      <button class="rating-btn r${sess.clozeCorrect ? '4' : '2'}" onclick="rateCard(${sess.clozeCorrect ? 3 : 1})">
+        <span class="rating-lbl">${sess.clozeCorrect ? 'Correto ✓' : 'Difícil'}</span>
+      </button>
+    </div>`}
+  `;
 }
 
 /* ── MODO: ESCOLHA VISUAL (DUOLINGO STYLE) ── */
@@ -932,607 +1468,16 @@ function buildImgChoiceMode(card) {
   `;
 }
 
-function buildTypeMode(card) {
-  const sess = studySession;
-  const answered = sess.typeAnswered;
-  const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
-  
-  const promptTxt = isRel ? `Digite UM ${card.cardType} para:` : 'Escreva a palavra para esta definição:';
-  const displayTxt = isRel ? card.word : card.definition;
-
-  return `
-    <div class="card" style="margin-bottom:12px">
-      <div class="card-body" style="text-align:center">
-        <div class="fc-type" style="margin-bottom:8px">${promptTxt}</div>
-        ${renderVisual(card)}
-        <div class="fc-definition" style="font-size:22px;line-height:1.4;color:var(--gold2)">${esc(displayTxt)}</div>
-      </div>
-    </div>
-    ${!answered ? `
-    <div style="display:flex;gap:8px;margin-bottom:10px">
-      <input class="inp" id="typeInput" placeholder="Digite aqui..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" onkeydown="if(event.key==='Enter')checkType()">
-      <button class="btn gold" style="width:auto;padding:10px 16px" onclick="checkType()">→</button>
-    </div>` : `
-    <div class="type-result ${sess.typeCorrect ? 'ok' : 'fail'}" style="margin-bottom:10px">
-      ${sess.typeCorrect ? '✓ Excelente!' : '✗ Incorreto.'} 
-      <div style="font-size:13px;margin-top:4px;color:var(--stone2)">
-        ${isRel ? `Opções válidas: <b>${esc(card.definition)}</b>` : `A resposta é: <b>${esc(card.word)}</b>`}
-      </div>
-    </div>
-    <div class="rating-row">
-      <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
-      <button class="rating-btn r${sess.typeCorrect ? '4' : '2'}" onclick="rateCard(${sess.typeCorrect ? 3 : 1})"><span class="rating-lbl">${sess.typeCorrect ? 'Correto ✓' : 'Difícil'}</span></button>
-    </div>`}`;
-}
-
-function buildContextMode(card) {
-  const sess = studySession;
-  const answered = sess.contextAnswered;
-  const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
-  
-  // ✨ CORREÇÃO: Separamos a lógica de quando TEM exemplo de quando NÃO TEM
-  let blanked = '';
-  let revealed = '';
-  
-  if (card.example) {
-    // Se você digitou um exemplo prático, ele esconde a palavra no meio da frase
-    blanked = esc(card.example).replace(new RegExp('('+escReg(card.word)+')', 'gi'), '______');
-    revealed = esc(card.example).replace(new RegExp('('+escReg(card.word)+')', 'gi'), '<mark>$1</mark>');
-  } else {
-    // Se não tem exemplo, criamos um formato à prova de falhas e mais bonito!
-    if (isRel) {
-      blanked = `<span style="font-size:14px;color:var(--stone)">Palavra base:</span><br><b style="color:var(--gold2);font-size:20px">${esc(card.word)}</b><br><br>Digite UM ${card.cardType}: ______`;
-      revealed = `<span style="font-size:14px;color:var(--stone)">Palavra base:</span><br><b style="color:var(--gold2);font-size:20px">${esc(card.word)}</b>`;
-    } else {
-      blanked = `<span style="font-size:14px;color:var(--stone)">Significa:</span><br><i>"${esc(card.definition)}"</i><br><br>A palavra é: ______`;
-      revealed = `<span style="font-size:14px;color:var(--stone)">Significa:</span><br><i>"${esc(card.definition)}"</i><br><br>A palavra é: <mark>${esc(card.word)}</mark>`;
-    }
-  }
-  
-  let html = `
-    <div class="context-card">
-      <div class="context-q">${isRel ? `Complete com UM ${card.cardType.toUpperCase()}:` : 'Complete a lacuna:'}</div>
-      ${renderVisual(card)}<div class="context-text" id="ctxText">${answered ? revealed : blanked}</div>
-    </div>`;
-
-  // Esconde a "Definição contextual" se for Sinônimo/Antônimo (pois é spoiler)
-  if (!isRel) {
-    html += `
-    <div style="margin-bottom:10px">
-      <div class="lbl">Definição contextual</div>
-      <div style="font-size:15px;color:var(--ink2);font-style:italic;line-height:1.7">${esc(card.definition)}</div>
-    </div>`;
-  }
-
-  if (!answered) {
-    html += `
-    <div style="display:flex;gap:8px">
-      <input class="inp" id="ctxInput" placeholder="Escreva a palavra..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" onkeydown="if(event.key==='Enter')checkContext()">
-      <button class="btn gold" style="width:auto;padding:10px 16px" onclick="checkContext()">→</button>
-    </div>
-    <button class="btn ghost" style="margin-top:8px" onclick="skipContext()">Ver resposta →</button>`;
-  } else {
-    html += `
-    <div class="type-result ${sess.contextCorrect ? 'ok' : 'fail'}" style="margin-bottom:10px">
-      ${sess.contextCorrect ? `✓ Excelente!` : `✗ Incorreto.`}
-    </div>`;
-
-    // Mostra o gabarito organizado com a base e todos os sinônimos
-    if (isRel) {
-       html += `
-       <div class="quote" style="margin-bottom:10px; border-color: ${sess.contextCorrect ? 'var(--green)' : 'var(--red)'}">
-         <b>${card.cardType === 'sinônimo' ? 'Sinônimos' : 'Antônimos'} válidos:</b><br> 
-         <span style="color:var(--ink)">${esc(clean(card.definition))}</span>
-       </div>`;
-    } else if (!sess.contextCorrect) {
-       html += `<div class="quote" style="margin-bottom:10px; border-color: var(--red)">A palavra correta era: "${esc(card.word)}"</div>`;
-    }
-
-    html += `
-    <div class="rating-row">
-      <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
-      <button class="rating-btn r${sess.contextCorrect ? '4' : '2'}" onclick="rateCard(${sess.contextCorrect ? 3 : 1})">
-        <span class="rating-lbl">${sess.contextCorrect ? 'Perfeito ✓' : 'Difícil'}</span>
-      </button>
-    </div>`;
-  }
-  return html;
-}
-
-/* ── MODO: ESCOLHA INVERSA ── */
-
-function buildRevChoiceMode(card) {
-  const sess = studySession;
-  if (!sess.revChoices) {
-    const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
-    
-    // ✨ INTELIGÊNCIA EM CASCATA: Filtra opções falsas com precisão cirúrgica
-    let pool = W.filter(w => w.id !== card.id);
-    const isLong = (c) => ['técnica', 'falácia', 'citação'].includes(c.cardType || 'normal');
-    
-    let t1 = pool.filter(w => w.cardType === card.cardType && w.wordClass === card.wordClass && card.wordClass);
-    let t2 = pool.filter(w => w.cardType === card.cardType);
-    let t3 = pool.filter(w => isLong(w) === isLong(card));
-
-    // Pega o melhor grupo disponível e sorteia 3 cartas
-    let othersCards = t1.length >= 3 ? t1 : (t2.length >= 3 ? t2 : (t3.length >= 3 ? t3 : pool));
-    
-    // Se faltarem cartas no banco para misturar, pega de qualquer tipo
-    if (othersCards.length < 3) othersCards = W.filter(w => w.id !== card.id);
-    
-    const shuffled = othersCards.sort(() => Math.random() - .5).slice(0, 3);
-    sess.revChoices = [...shuffled.map(w => w.word), card.word].sort(() => Math.random() - .5);
-    
-    let def = card.definition;
-    if (isRel) {
-       const valids = getValidAnswers(card);
-       def = valids[Math.floor(Math.random() * valids.length)];
-    }
-    sess.revChoicePrompt = def;
-  }
-  
-  const answered = sess.revChoiceAnswered;
-  const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
-
-  return `
-    <div class="card" style="margin-bottom:12px">
-      <div class="card-body" style="text-align:center">
-        <div class="fc-type" style="margin-bottom:10px">${isRel ? `Qual palavra possui este ${card.cardType}:` : 'Qual é a palavra para esta definição:'}</div>
-        ${renderVisual(card)}<div class="fc-definition" style="font-size:18px;line-height:1.6">${esc(sess.revChoicePrompt)}</div>
-      </div>
-    </div>
-    <div id="choices">
-      ${sess.revChoices.map((ch, i) => {
-        let cls = 'choice-opt';
-        if (answered) {
-          if (ch === card.word) cls += ' correct';
-          else if (ch === sess.revChoiceSelected) cls += ' wrong reveal';
-          else cls += ' reveal';
-        }
-        return `<div class="${cls}" style="font-family:'Cinzel',serif;font-style:normal;font-weight:600;text-align:center;font-size:16px" onclick="${answered ? '' : `revChoiceAnswer(${i})`}">${esc(ch)}</div>`;
-      }).join('')}
-    </div>
-    ${answered ? `
-    <div style="margin-top:6px">
-      <div class="rating-row">
-        <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
-        <button class="rating-btn r${sess.revChoiceCorrect ? '4' : '2'}" onclick="rateCard(${sess.revChoiceCorrect ? 3 : 1})">
-          <span class="rating-lbl">${sess.revChoiceCorrect ? 'Fácil ✓' : 'Difícil'}</span>
-        </button>
-      </div>
-    </div>` : ''}`;
-}
-
-//modo verdadeiro ou falso
-function buildTFMode(card) {
-  const sess = studySession;
-  if (!sess.tfSetup) {
-    const isCorrect = Math.random() > 0.5;
-    let def = '';
-    const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
-    
-    // Pega a resposta correta (se for sinônimo, sorteia UMA palavra da lista)
-    const correctAnswers = getValidAnswers(card);
-    const correctDef = isRel ? correctAnswers[Math.floor(Math.random() * correctAnswers.length)] : card.definition;
-
-    if (!isCorrect && W.length > 1) {
-      // ✨ INTELIGÊNCIA EM CASCATA: Se for mentira, mente com perfeição!
-      let pool = W.filter(w => w.id !== card.id);
-      const isLong = (c) => ['técnica', 'falácia', 'citação'].includes(c.cardType || 'normal');
-      
-      let t1 = pool.filter(w => w.cardType === card.cardType && w.wordClass === card.wordClass && card.wordClass);
-      let t2 = pool.filter(w => w.cardType === card.cardType);
-      let t3 = pool.filter(w => isLong(w) === isLong(card));
-
-      let othersCards = t1.length >= 1 ? t1 : (t2.length >= 1 ? t2 : (t3.length >= 1 ? t3 : pool));
-      
-      let others = [];
-      
-      // ✨ O MURO DE BERLIM APLICADO NO V/F:
-      if (isRel) {
-        others = othersCards.flatMap(w => (w.cardType === 'sinônimo' || w.cardType === 'antônimo') ? getValidAnswers(w) : [w.word]);
-        if (others.length === 0) others = pool.map(w => w.word);
-      } else {
-        others = othersCards.flatMap(w => (w.cardType === 'sinônimo' || w.cardType === 'antônimo') ? [] : getValidAnswers(w));
-        if (others.length === 0) others = pool.filter(w => w.cardType !== 'sinônimo' && w.cardType !== 'antônimo').map(w => w.definition);
-      }
-      
-      def = others[Math.floor(Math.random() * others.length)] || correctDef;
-      sess.tfIsCorrect = def === correctDef;
-    } else {
-      sess.tfIsCorrect = true;
-      def = correctDef;
-    }
-    sess.tfDefinition = def;
-    sess.tfSetup = true;
-  }
-  const answered = sess.tfAnswered;
-
-  return `
-    <div class="card" style="margin-bottom:12px;border:2px solid ${answered ? (sess.tfUserCorrect ? 'var(--green)' : 'var(--red)') : 'var(--border)'}">
-      <div class="card-body" style="text-align:center;padding:24px 16px">
-        ${renderVisual(card)}<div class="fc-word" style="font-size:32px;margin-bottom:16px">${esc(card.word)}</div>
-        <div style="font-size:13px;color:var(--stone2);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">${card.cardType === 'sinônimo' ? 'Tem como sinônimo:' : 'Significa:'}</div>
-        <div class="fc-definition" style="font-size:18px;">"${esc(sess.tfDefinition)}"</div>
-      </div>
-    </div>
-    ${!answered ? `
-    <div class="btn-row" style="margin-top:16px">
-      <button class="btn success" style="padding:14px;font-size:14px" onclick="checkTF(true)">✓ Verdadeiro</button>
-      <button class="btn danger" style="padding:14px;font-size:14px" onclick="checkTF(false)">✕ Falso</button>
-    </div>` : `
-    <div class="type-result ${sess.tfUserCorrect ? 'ok' : 'fail'}" style="margin-bottom:10px">
-      ${sess.tfUserCorrect ? '✓ Acertou!' : `✗ Errou. A resposta era <b>${sess.tfIsCorrect ? 'Verdadeiro' : 'Falso'}</b>.`}
-    </div>
-    ${!sess.tfIsCorrect && !sess.tfUserCorrect ? `<div class="quote" style="margin-bottom:10px">${card.cardType === 'sinônimo' ? 'Sinônimos reais:' : 'Definição real:'} ${esc(card.definition)}</div>` : ''}
-    <div class="rating-row">
-      <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
-      <button class="rating-btn r${sess.tfUserCorrect ? '4' : '2'}" onclick="rateCard(${sess.tfUserCorrect ? 3 : 1})">
-        <span class="rating-lbl">${sess.tfUserCorrect ? 'Correto ✓' : 'Difícil'}</span>
-      </button>
-    </div>`}`;
-}
-
-/* ── MODO: EMBARALHADO ── */
-
-function buildScrambleMode(card) {
-  const sess = studySession;
-  if (!sess.scrambleSetup) {
-    let target = card.word;
-    if (card.cardType === 'sinônimo' || card.cardType === 'antônimo') {
-      const valids = getValidAnswers(card);
-      target = valids[Math.floor(Math.random() * valids.length)];
-    }
-    
-    // ✨ CORREÇÃO: Normaliza os acentos para o embaralhador não quebrar
-    sess.scrambleTarget = target.normalize('NFC'); 
-    
-    const letters = sess.scrambleTarget.replace(/[\s\u200B-\u200D\uFEFF]/g, '').split('');
-    sess.scrambledWord = letters.sort(() => Math.random() - 0.5).join('  ').toUpperCase();
-    sess.scrambleSetup = true;
-  }
-  const answered = sess.scrambleAnswered;
-  
-  const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
-  const promptTxt = isRel ? `Desembaralhe UM ${card.cardType} de:` : `Desembaralhe as letras:`;
-  const displayTxt = isRel ? card.word : card.definition;
-
-  return `
-    <div class="card" style="margin-bottom:12px">
-      <div class="card-body" style="text-align:center">
-        <div class="fc-type" style="margin-bottom:8px">${promptTxt}</div>
-        ${renderVisual(card)}
-        <div style="font-family:'JetBrains Mono',monospace;font-size:24px;color:var(--gold2);letter-spacing:4px;margin-bottom:14px;padding:10px;background:rgba(0,0,0,0.3);border-radius:var(--r)">${esc(sess.scrambledWord)}</div>
-        <div class="fc-definition" style="font-size:16px;">${esc(displayTxt)}</div>
-      </div>
-    </div>
-    ${!answered ? `
-    <div style="display:flex;gap:8px;margin-bottom:10px">
-      <input class="inp" id="scrambleInput" placeholder="Digite a palavra..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" onkeydown="if(event.key==='Enter')checkScramble()">
-      <button class="btn gold" style="width:auto;padding:10px 16px" onclick="checkScramble()">→</button>
-    </div>` : `
-    <div class="type-result ${sess.scrambleCorrect ? 'ok' : 'fail'}" style="margin-bottom:10px">
-      ${sess.scrambleCorrect ? `✓ Perfeito! "${esc(sess.scrambleTarget)}"` : `✗ A palavra correta é: "${esc(sess.scrambleTarget)}"`}
-    </div>
-    <div class="rating-row">
-      <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
-      <button class="rating-btn r${sess.scrambleCorrect ? '4' : '2'}" onclick="rateCard(${sess.scrambleCorrect ? 3 : 1})">
-        <span class="rating-lbl">${sess.scrambleCorrect ? 'Correto ✓' : 'Difícil'}</span>
-      </button>
-    </div>`}`;
-}
-
-/* ── MODO: LETRAS (BOTÕES) ── */
-
-function buildSpellMode(card) {
-  const sess = studySession;
-  if (!sess.spellSetup) {
-    let target = card.word;
-    if (card.cardType === 'sinônimo' || card.cardType === 'antônimo') {
-      const valids = getValidAnswers(card);
-      target = valids[Math.floor(Math.random() * valids.length)];
-    }
-    
-    // ✨ CORREÇÃO: O NFC cola os acentos nas letras, impedindo botões "vazios".
-    sess.spellTarget = target.normalize('NFC'); 
-    
-    // Filtro avançado: apaga espaços normais E espaços invisíveis (Zero-Width)
-    const chars = sess.spellTarget.replace(/[\s\u200B-\u200D\uFEFF]/g, '').toUpperCase().split('');
-    
-    sess.spellPool = chars.map((char, i) => ({ id: i, char })).sort(() => Math.random() - 0.5);
-    sess.spellAnswer = []; 
-    sess.spellSetup = true;
-  }
-  const answered = sess.spellAnswered;
-
-  const ansHtml = sess.spellAnswer.map(id => {
-    const item = sess.spellPool.find(p => p.id === id);
-    return `<button class="btn gold sm" style="width:38px;height:38px;padding:0;font-size:18px;font-weight:700" onclick="${answered ? '' : `spellRemove(${id})`}">${item.char}</button>`;
-  }).join('');
-
-  const availHtml = sess.spellPool.filter(p => !sess.spellAnswer.includes(p.id)).map(item => {
-    return `<button class="btn ghost sm" style="width:38px;height:38px;padding:0;font-size:18px;font-weight:700;border-color:var(--border2)" onclick="${answered ? '' : `spellAdd(${item.id})`}">${item.char}</button>`;
-  }).join('');
-
-  const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
-  const promptTxt = isRel ? `Forme UM ${card.cardType} para:` : `Toque para formar a palavra:`;
-  const displayTxt = isRel ? card.word : card.definition;
-
-  return `
-    <div class="card" style="margin-bottom:12px">
-      <div class="card-body" style="text-align:center">
-        <div class="fc-type" style="margin-bottom:8px">${promptTxt}</div>
-        ${renderVisual(card)}
-        <div class="fc-definition" style="font-size:16px;margin-bottom:16px">${esc(displayTxt)}</div>
-
-        <div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;align-items:center;min-height:54px;padding:8px;background:rgba(0,0,0,0.3);border-radius:var(--r);border:1px dashed var(--border3);margin-bottom:16px">
-          ${ansHtml}
-        </div>
-
-        ${!answered ? `
-        <div style="display:flex;flex-wrap:wrap;gap:20px;justify-content:center">
-          ${availHtml}
-        </div>` : ''}
-      </div>
-    </div>
-
-    ${!answered ? `
-    <div style="display:flex;gap:8px">
-      <button class="btn ghost" style="flex:1" onclick="spellClear()">⟲ Limpar</button>
-      <button class="btn gold" style="flex:2" onclick="checkSpell()">Verificar →</button>
-    </div>` : `
-    <div class="type-result ${sess.spellCorrect ? 'ok' : 'fail'}" style="margin-bottom:10px">
-      ${sess.spellCorrect ? `✓ Excelente! "${esc(sess.spellTarget)}"` : `✗ A palavra correta é: "${esc(sess.spellTarget)}"`}
-    </div>
-    <div class="rating-row">
-      <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
-      <button class="rating-btn r${sess.spellCorrect ? '4' : '2'}" onclick="rateCard(${sess.spellCorrect ? 3 : 1})">
-        <span class="rating-lbl">${sess.spellCorrect ? 'Correto ✓' : 'Difícil'}</span>
-      </button>
-    </div>`}
-  `;
-}
 
 // Funções de clique do Modo Letras
 function spellAdd(id) { if(!studySession)return; studySession.spellAnswer.push(id); render(); }
 function spellRemove(id) { if(!studySession)return; studySession.spellAnswer = studySession.spellAnswer.filter(i => i !== id); render(); }
 function spellClear() { if(!studySession)return; studySession.spellAnswer = []; render(); }
-/* ── MODO: SINTAXE (ORDENAR FRASE) ── */
-/* ── MODO: SINTAXE E SELEÇÃO MÚLTIPLA ── */
-function buildSyntaxMode(card) {
-  const sess = studySession;
-  const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
-
-  if (!sess.syntaxSetup) {
-    if (isRel && !card.example) {
-      // ✨ JOGO B: Modo "Pesque os Sinônimos" (Sem ordem)
-      const valids = getValidAnswers(card);
-      // Pega até 4 respostas corretas
-      const targetsToFind = valids.sort(() => Math.random() - 0.5).slice(0, 4);
-      // Exige que acerte no máximo 3 (ou menos, se a palavra tiver só 2 sinônimos)
-      sess.syntaxNeededCount = Math.min(3, targetsToFind.length);
-
-      // Busca palavras falsas no resto do banco de dados para confundir
-      let others = W.filter(w => w.id !== card.id).flatMap(w => w.cardType === 'sinônimo' || w.cardType === 'antônimo' ? getValidAnswers(w) : [w.word]);
-      
-      // Improviso caso seu banco ainda esteja pequeno
-      if (others.length < 6) others = [...others, "inefável", "assertivo", "prolixo", "efêmero", "pragmático", "eloquente"];
-      
-      const fakes = [...new Set(others)].filter(opt => !valids.includes(opt)).sort(() => Math.random() - 0.5).slice(0, 6);
-
-      // Mistura tudo
-      const poolWords = [...targetsToFind, ...fakes].sort(() => Math.random() - 0.5);
-      
-      sess.syntaxPool = poolWords.map((w, i) => ({ id: i, word: clean(w) }));
-      sess.syntaxTargetWords = valids; // Salva o gabarito original
-      sess.isSynonymMatch = true;
-      
-    } else {
-      // ✨ JOGO A: Modo "Ordene a Frase" normal
-      // Se tiver exemplo, usa o exemplo. Se não tiver (e for carta normal), usa a definição.
-      const textToOrder = card.example || card.definition;
-      const words = textToOrder.split(/\s+/).filter(Boolean);
-      
-      sess.syntaxTarget = textToOrder;
-      sess.syntaxPool = words.map((w, i) => ({ id: i, word: w })).sort(() => Math.random() - 0.5);
-      sess.isSynonymMatch = false;
-    }
-    
-    sess.syntaxAnswer = [];
-    sess.syntaxSetup = true;
-  }
-  
-  const answered = sess.syntaxAnswered;
-
-  const ansHtml = sess.syntaxAnswer.map(id => {
-    const item = sess.syntaxPool.find(p => p.id === id);
-    return `<button class="btn gold sm" style="padding:6px 12px;font-size:14px;width:auto;text-transform:none;letter-spacing:normal" onclick="${answered?'':`syntaxRemove(${id})`}">${esc(item.word)}</button>`;
-  }).join('');
-
-  const availHtml = sess.syntaxPool.filter(p => !sess.syntaxAnswer.includes(p.id)).map(item => {
-    return `<button class="btn ghost sm" style="padding:6px 12px;font-size:14px;width:auto;border-color:var(--border2);text-transform:none;letter-spacing:normal" onclick="${answered?'':`syntaxAdd(${item.id})`}">${esc(item.word)}</button>`;
-  }).join('');
-
-  // Define os textos da tela dependendo do jogo
-  const promptTxt = sess.isSynonymMatch ? `Selecione pelo menos ${sess.syntaxNeededCount} ${card.cardType}s válidos:` : 'Ordene a frase/conceito:';
-  
-  let feedbackTxt = sess.isSynonymMatch ? `<b>Opções válidas:</b> ${esc(clean(card.definition))}` : `"${esc(sess.syntaxTarget)}"`;
-
-  return `
-    <div class="card" style="margin-bottom:12px">
-      <div class="card-body" style="text-align:center">
-        <div class="fc-type" style="margin-bottom:8px">${promptTxt}</div>
-        ${renderVisual(card)}
-        ${card.cardType !== 'citação' ? `<div class="fc-word" style="font-size:20px;margin-bottom:12px">${esc(card.word)}</div>` : ''}
-        
-        <div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;align-items:center;min-height:60px;padding:12px;background:rgba(0,0,0,0.3);border-radius:var(--r);border:1px dashed var(--border3);margin-bottom:16px">
-          ${ansHtml}
-        </div>
-        ${!answered ? `<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center">${availHtml}</div>` : ''}
-      </div>
-    </div>
-    ${!answered ? `
-    <div style="display:flex;gap:8px">
-      <button class="btn ghost" style="flex:1" onclick="syntaxClear()">⟲ Limpar</button>
-      <button class="btn gold" style="flex:2" onclick="checkSyntax()">Verificar →</button>
-    </div>` : `
-    <div class="type-result ${sess.syntaxCorrect ? 'ok' : 'fail'}" style="margin-bottom:10px">
-      ${sess.syntaxCorrect ? `✓ Excelente!` : `✗ Incorreto.`}
-      <div style="margin-top:6px;font-size:14px;color:var(--ink);font-style:italic">${feedbackTxt}</div>
-    </div>
-    <div class="rating-row">
-      <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
-      <button class="rating-btn r${sess.syntaxCorrect ? '4' : '2'}" onclick="rateCard(${sess.syntaxCorrect ? 3 : 1})"><span class="rating-lbl">${sess.syntaxCorrect ? 'Correto ✓' : 'Difícil'}</span></button>
-    </div>`}
-  `;
-}
 
 function syntaxAdd(id) { if(!studySession)return; studySession.syntaxAnswer.push(id); render(); }
 function syntaxRemove(id) { if(!studySession)return; studySession.syntaxAnswer = studySession.syntaxAnswer.filter(i => i !== id); render(); }
 function syntaxClear() { if(!studySession)return; studySession.syntaxAnswer = []; render(); }
 
-
-/* ── MODO: LACUNAS AVANÇADAS (CLOZE) ── */
-
-/* ── MODO: LACUNAS AVANÇADAS (CLOZE) ── */
-/* ── MODO: LACUNAS AVANÇADAS (CLOZE) ── */
-function buildClozeMode(card) {
-  const sess = studySession;
-  const isRel = card.cardType === 'sinônimo' || card.cardType === 'antônimo';
-
-  if (!sess.clozeSetup) {
-    let text = "";
-    let blanks = [];
-    let poolWords = [];
-    let isRelList = false;
-
-    if (isRel && !card.example) {
-      // ✨ MODO B: Sinônimos sem exemplo (A ordem NÃO importa)
-      isRelList = true;
-      const valids = getValidAnswers(card);
-      const numBlanks = Math.min(3, valids.length);
-      blanks = valids.sort(() => Math.random() - 0.5).slice(0, numBlanks);
-      
-      text = Array(numBlanks).fill('___').join(' &nbsp;•&nbsp; ');
-      
-      let others = W.filter(w => w.id !== card.id).flatMap(w => w.cardType === 'sinônimo' || w.cardType === 'antônimo' ? getValidAnswers(w) : [w.word]);
-      if (others.length < 6) others = [...others, "inefável", "assertivo", "prolixo", "efêmero", "pragmático"];
-      const fakes = [...new Set(others)].filter(opt => !valids.includes(opt)).sort(() => Math.random() - 0.5).slice(0, 5);
-      
-      poolWords = [...blanks, ...fakes];
-    } else {
-      // ✨ MODO A: Frase Normal (Com Exemplo ou Definição)
-      text = isRel ? card.example : card.definition; 
-      
-      let matches = [...text.matchAll(/\*([^*]+)\*/g)];
-      if (matches.length > 0) {
-         matches.forEach(m => blanks.push(m[1].trim()));
-         text = text.replace(/\*([^*]+)\*/g, '___');
-      } else {
-         let words = text.split(/\s+/);
-         let eligible = words.filter(w => w.replace(/[.,!?;:"'()]/g, '').length > 4);
-         let selectedToHide = eligible.sort(() => Math.random() - 0.5).slice(0, 2); // Esconde 2 palavras
-         
-         let newTextArr = [];
-         words.forEach(w => {
-           if (selectedToHide.includes(w)) {
-             let cleanWord = w.replace(/[.,!?;:"'()]/g, '');
-             blanks.push(cleanWord); 
-             newTextArr.push(w.replace(cleanWord, '___'));
-             selectedToHide.splice(selectedToHide.indexOf(w), 1);
-           } else {
-             newTextArr.push(w);
-           }
-         });
-         text = newTextArr.join(' ');
-      }
-      
-      // ✨ A MÁGICA DA CONFUSÃO AQUI: Adicionamos "Iscas" para palavras normais!
-      // Pegamos palavras do seu próprio banco de dados para servirem de falsas respostas
-      let others = W.filter(w => w.id !== card.id).map(w => w.word);
-      
-      // Se não tiver muitas palavras no banco ainda, ele tira essas da manga:
-      if (others.length < 8) others = [...others, "intrínseco", "efêmero", "pragmático", "eloquente", "inefável", "prolixo", "sagaz", "peculiar"];
-      
-      // Sorteia de 4 a 5 palavras iscas que não sejam as respostas corretas
-      const numFakes = Math.max(4, 7 - blanks.length); 
-      const fakes = [...new Set(others)]
-        .filter(opt => !blanks.includes(clean(opt)) && clean(opt) !== clean(card.word))
-        .sort(() => Math.random() - 0.5)
-        .slice(0, numFakes);
-
-      poolWords = [...blanks, ...fakes];
-
-      // Se for Sinônimo com Exemplo, adiciona os outros sinônimos válidos para a regra flexível
-      if (isRel) {
-         const valids = getValidAnswers(card);
-         const extraSyns = valids.filter(v => !poolWords.includes(v));
-         poolWords = [...poolWords, ...extraSyns];
-      }
-    }
-    
-    sess.clozeText = text; 
-    sess.clozeAnswers = blanks; 
-    
-    // Embaralha tudo de forma aleatória para a tela final
-    sess.clozePool = [...new Set(poolWords)].map((w,i)=>({id:i, word:clean(w)})).sort(() => Math.random() - 0.5);
-    sess.clozeUserAnswers = []; 
-    sess.clozeIsRelList = isRelList;
-    sess.clozeSetup = true;
-  }
-  
-  const answered = sess.clozeAnswered;
-  let displayText = sess.clozeText;
-  let slotIndex = 0;
-  
-  displayText = displayText.replace(/___/g, () => {
-     if (slotIndex < sess.clozeUserAnswers.length) {
-        const pickedId = sess.clozeUserAnswers[slotIndex++];
-        const word = sess.clozePool.find(p=>p.id === pickedId).word;
-        return `<span style="color:var(--gold2);text-decoration:underline;cursor:pointer" onclick="${answered?'':`clozeRemove(${pickedId})`}">${esc(word)}</span>`;
-     } else {
-        slotIndex++;
-        return `<span style="opacity:0.3">______</span>`;
-     }
-  });
-
-  const availHtml = sess.clozePool.filter(p => !sess.clozeUserAnswers.includes(p.id)).map(item => {
-    return `<button class="btn ghost sm" style="padding:6px 12px;font-size:14px;width:auto;border-color:var(--border2);text-transform:none;letter-spacing:normal" onclick="${answered?'':`clozeAdd(${item.id})`}">${esc(item.word)}</button>`;
-  }).join('');
-
-  const promptTxt = sess.clozeIsRelList ? `Selecione ${sess.clozeAnswers.length} ${card.cardType}s:` : 'Preencha as lacunas na ordem:';
-
-  return `
-    <div class="card" style="margin-bottom:12px">
-      <div class="card-body" style="text-align:center">
-        <div class="fc-type" style="margin-bottom:8px">${promptTxt}</div>
-        ${renderVisual(card)}
-        ${card.cardType !== 'citação' ? `<div class="fc-word" style="font-size:20px;margin-bottom:12px">${esc(card.word)}</div>` : ''}
-        <div style="font-size:18px;line-height:1.6;color:var(--ink);font-style:italic;margin-bottom:16px;text-align:${sess.clozeIsRelList ? 'center' : 'left'};padding:10px;background:rgba(0,0,0,0.2);border-radius:var(--r)">
-          ${sess.clozeIsRelList ? displayText : `"${displayText}"`}
-        </div>
-        ${!answered && availHtml ? `<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center">${availHtml}</div>` : ''}
-      </div>
-    </div>
-    ${!answered ? `
-    <div style="display:flex;gap:8px">
-      <button class="btn ghost" style="flex:1" onclick="clozeClear()">⟲ Limpar</button>
-      <button class="btn gold" style="flex:2" onclick="checkCloze()">Verificar →</button>
-    </div>` : `
-    <div class="type-result ${sess.clozeCorrect ? 'ok' : 'fail'}" style="margin-bottom:10px">
-      ${sess.clozeCorrect ? `✓ Excelente!` : `✗ Incorreto.`}
-    </div>
-    <div class="quote" style="margin-bottom:10px; border-color: ${sess.clozeCorrect ? 'var(--green)' : 'var(--red)'}">
-       ${esc(clean(card.definition))}
-    </div>
-    <div class="rating-row">
-      <button class="rating-btn r1" onclick="rateCard(0)"><span class="rating-lbl">De novo</span></button>
-      <button class="rating-btn r${sess.clozeCorrect ? '4' : '2'}" onclick="rateCard(${sess.clozeCorrect ? 3 : 1})">
-        <span class="rating-lbl">${sess.clozeCorrect ? 'Correto ✓' : 'Difícil'}</span>
-      </button>
-    </div>`}
-  `;
-}
 
 function clozeAdd(id) { if(!studySession)return; studySession.clozeUserAnswers.push(id); render(); }
 function clozeRemove(id) { if(!studySession)return; studySession.clozeUserAnswers = studySession.clozeUserAnswers.filter(i => i !== id); render(); }
@@ -2124,8 +2069,8 @@ function buildWordForm(word) {
       <div class="form-group" style="flex:1;margin:0">
         <label class="lbl">Tipo de Card</label>
         <select class="inp" id="fw_type" style="border-color:var(--gold2);color:var(--gold2)" onchange="handleTypeChange()">
-          <option value="universal" ${(w.cardType)==='universal'?'selected':''}>🌌 Universal (Gera Tudo)</option>
-          <option value="normal" ${(w.cardType||'normal')==='normal'?'selected':''}>📖 Palavra Normal</option>
+          <option value="universal" ${(!w.cardType || w.cardType==='universal')?'selected':''}>🌌 Universal (Gera Tudo)</option>
+          <option value="normal" ${(w.cardType)==='normal'?'selected':''}>📖 Palavra Normal</option>
           <option value="sinônimo" ${(w.cardType)==='sinônimo'?'selected':''}>🔗 Sinônimos</option>
           <option value="antônimo" ${(w.cardType)==='antônimo'?'selected':''}>⚖️ Antônimos</option>
           <option value="conectivo" ${(w.cardType)==='conectivo'?'selected':''}>🔗 Conectivo / Transição</option>
@@ -2695,6 +2640,9 @@ function loadStarter() {
 /* ═══════════════════════════════════════
    UTILS
 ═══════════════════════════════════════ */
+function hl(txt) {
+  return `<strong style="color:#e024ff; font-size:1.15em; text-transform:uppercase; text-shadow: 0px 0px 8px rgba(224,36,255,0.6);">${txt}</strong>`;
+}
 // Remove os asteriscos para exibição visual
 function clean(s) {
   return (s || '').replace(/\*/g, '');
